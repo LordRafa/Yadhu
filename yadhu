@@ -1,0 +1,180 @@
+#!/bin/bash
+
+CONFIG="/etc/Yadhu.conf"
+
+Daemon=$1
+function log(){
+	if [ "$Daemon" = "-d" ]; then
+		logger -t "Yadhu" "$1"
+	else
+		logger -t "Yadhu" -s "$1"
+	fi
+}
+
+function get_json(){
+	ret=$(echo $1 | grep -Po '"'$2'":.*?[^\\]",?')
+	ret=$(echo $ret | cut -f2- -d':' | tr -d '",')
+	echo $ret
+}
+
+function gen_conftemplate(){
+    cat > Yadhu.conf <<EOF
+# Please generate a pair of AppKey and AppSecrect
+# at https://eu.api.ovh.com/createApp/
+AppKey=
+AppSecrect=
+
+# Domain name.
+Domain=
+# Subdomain list separated by commas. Leave empty to change all subdomains.
+Subdomains=
+
+# Web to get the public ip
+Web=http://checkip.dyndns.com
+# Pattern to parse public ip
+WebPatt="([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)"
+
+# Check Interval in seconds
+Check=18000
+
+# Consumer key. Don't edit, controlled by Yadhu 
+__ck=
+EOF
+}
+
+function set_ck(){
+	sed -i "s/__ck=.*/__ck=\"$1\"/" $CONFIG
+	__ck=$1
+}
+
+function request_ck(){
+	res=$(curl -s -X POST \
+				-H "X-Ovh-Application: $AppKey" \
+				-H "Content-type: application/json" \
+				-d '{"accessRules": [
+						{"method": "GET", "path": "/domain/zone/*"},
+						{"method": "PUT", "path": "/domain/zone/*"}
+					]}' \
+				https://eu.api.ovh.com/1.0/auth/credential)
+	ck=$(get_json "$res" "consumerKey")
+	if [ -z $ck ]; then
+		err=$(get_json "$ret" "message")
+		log "Error: $err"
+		exit 1
+	fi
+	url=$(get_json "$res" "validationUrl")
+	echo "Please to authenticate Yadhu visit:"
+	echo "$url"
+	read -n1 -p "After press any key to continue or ctrl-c to cancel."
+	set_ck "$ck"
+}
+
+function get_sign(){
+	AS=$1
+	CK=$2
+	Method=$3
+	Body=$4
+	TS=$5
+	Data=$6
+	ret='$1$'$(echo -n "$AS+$CK+$Method+$Body+$Data+$TS" | sha1sum)
+	ret=$(echo $ret | cut -d' ' -f1)
+	echo $ret
+}
+
+function get_ids(){
+	zone="https://eu.api.ovh.com/1.0/domain/zone/$Domain/dynHost/record"
+
+	if [ -z "$Subdomains" ]; then
+		TS=$(date +%s)
+		Sig=$(get_sign $AppSecrect $__ck GET $zone $TS)
+		ret=$(curl -s -X GET -H "X-Ovh-Application:$AppKey" \
+					-H "X-Ovh-Timestamp:$TS" \
+					-H "X-Ovh-Signature:$Sig" \
+					-H "X-Ovh-Consumer:$__ck" \
+					$zone)
+
+		err=$(get_json "$ret" "message")
+		if [ -n "$err" ]; then
+			log "Error: $err"
+			exit 1
+		fi
+		ids="$ids,$ret"
+	else
+		subd=$(echo $Subdomains | tr -s ',' ' ')
+		ids=""
+		for sd in $subd; do
+			Body="$zone?subDomain=$sd"
+			TS=$(date +%s)
+			Sig=$(get_sign $AppSecrect $__ck GET $Body $TS)
+			ret=$(curl -s -X GET -H "X-Ovh-Application:$AppKey" \
+						-H "X-Ovh-Timestamp:$TS" \
+						-H "X-Ovh-Signature:$Sig" \
+						-H "X-Ovh-Consumer:$__ck" \
+						$Body)
+
+			err=$(get_json "$ret" "message")
+			if [ -n "$err" ]; then
+				log "Error: $err"
+				exit 1
+			fi
+			ids="$ids,$ret"
+		done
+	fi
+
+	echo $(echo -n $ids |  tr -d '[]' | tr ',' ' ')
+}
+
+function set_dh(){
+	zone="https://eu.api.ovh.com/1.0/domain/zone/$Domain/dynHost/record/"
+	IP=$(curl -s "$Web" | grep -E -o "$WebPatt")
+	for id in $1; do
+		Body=$zone$id
+		Data='{"ip":"'$IP'"}'
+		TS=$(date +%s)
+		Sig=$(get_sign $AppSecrect $__ck PUT $Body $TS $Data)
+		ret=$(curl -s -X PUT -H "Content-Type:application/json" \
+			-H "X-Ovh-Application:$AppKey" \
+			-H "X-Ovh-Timestamp:$TS" \
+			-H "X-Ovh-Signature:$Sig" \
+			-H "X-Ovh-Consumer:$__ck" \
+			-d "$Data" \
+			$Body)
+
+		err=$(get_json "$ret" "message")
+		if [ -n "$err" ]; then
+			log "Error: $err"
+			exit 1
+		fi
+	done
+}
+
+# Generate config template if needed
+if [ ! -e "${CONFIG}" ]; then
+	gen_conftemplate
+	log "Config template generated, please modify with propper values."
+	exit 1
+fi
+
+# LOAD THE CONFIG FILE
+source $CONFIG
+
+if [ -z "$AppKey" -o -z "$AppSecrect" ]; then
+	log "Please generate a pair of AppKey and AppSecrect at:"
+	log "\"https://eu.api.ovh.com/createApp/\" and setup the config file."
+	exit 1
+fi
+
+if [ -z "$__ck" ]; then
+	request_ck
+fi
+
+if [ -z "$Domain" ]; then
+	log "Please set a domain name at the config file."
+	exit 1
+fi
+
+ids=$(get_ids)
+set_dh "$ids"
+
+exit 0
+
