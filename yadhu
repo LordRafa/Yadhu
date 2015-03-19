@@ -179,7 +179,6 @@ function set_dh(){
 function finish(){
 	[[ $pid ]] && kill $pid
 	rm /var/run/yadhu.pid
-	exit 0
 }
 
 if [ "$1" == "-d" ]; then
@@ -221,6 +220,7 @@ if [ -z "$Domain" ]; then
 fi
 
 while true; do
+	ids=""
 	ids=$(get_ids)
 	set_dh "$ids"
 
