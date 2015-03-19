@@ -176,8 +176,14 @@ function set_dh(){
 	done
 }
 
+function finish(){
+	[[ $pid ]] && kill $pid
+	rm /var/run/yadhu.pid
+	exit 0
+}
+
 if [ "$1" == "-d" ]; then
-	trap "rm /var/run/yadhu.pid" EXIT	
+	trap finish EXIT	
 fi
 
 # Generate config template if needed
