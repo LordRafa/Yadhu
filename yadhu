@@ -128,6 +128,7 @@ function get_ids(){
 function set_dh(){
 	zone="https://eu.api.ovh.com/1.0/domain/zone/$Domain/dynHost/record/"
 	IP=$(curl -s "$Web" | grep -E -o "$WebPatt")
+	logger -t "Yadhu" -s "Updating domains with IP: $IP"
 	for id in $1; do
 		Body=$zone$id
 		Data='{"ip":"'$IP'"}'
