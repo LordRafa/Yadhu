@@ -1,0 +1,61 @@
+#! /bin/sh
+NAME=yadhu
+EXEC=/usr/local/bin/yadhu
+PID_FILE=/var/run/yadhu.pid
+
+### BEGIN INIT INFO
+# Provides:          yadhu
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     5
+# Default-Stop:      0 1 2 3 6
+# Short-Description: Updates OVH DynHosts
+# Description: This daemon updates the OVH DynHosts whit
+#              the current public IP, by using the OVH API.
+### END INIT INFO
+
+. /lib/lsb/init-functions
+
+if [ ! -f $EXEC ]; then
+	echo "$EXEC not found."
+	exit 1
+fi
+
+case "$1" in
+	start)
+		log_daemon_msg "Starting yet another dynhost updater (yadhu)"
+		if [ -f $PID_FILE ]; then
+			log_daemon_msg "yadhu already started"
+			log_end_msg 1
+			exit 1
+		fi
+		start-stop-daemon --start -q --background --pidfile $PID_FILE --make-pidfile --exec $EXEC -- -d
+
+		sleep 1
+		if [ ! -f $PID_FILE ]; then
+			log_daemon_msg "Error: Check Syslog for more information."
+			log_daemon_msg "Help: Did you run yadhu command first to perform the initial setup?"
+			log_end_msg 1
+			exit 1
+		fi
+
+		log_end_msg 0
+	;;
+	stop)
+		log_daemon_msg "Stopping yet another dynhost updater (yadhu)"
+		start-stop-daemon --stop -q --oknodo --name $NAME --pidfile $PID_FILE
+		rm $PID_FILE 2> /dev/null
+		log_end_msg 0
+	;;
+	restart)
+		$0 stop
+		$0 start
+	;;
+	*)
+		log_daemon_msg "Use: /etc/init.d/$NAME {start|stop|restart}"
+		exit 1
+	;;
+esac
+
+exit 0
+

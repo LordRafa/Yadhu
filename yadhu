@@ -1,15 +1,16 @@
 #!/bin/bash
 
-CONFIG="/etc/Yadhu.conf"
+CONFIG="/etc/yadhu"
 
-Daemon=$1
-function log(){
-	if [ "$Daemon" = "-d" ]; then
-		logger -t "Yadhu" "$1"
-	else
-		logger -t "Yadhu" -s "$1"
-	fi
-}
+YELLOW="\033[1;33m"
+RED="\033[0;31m"
+ENDCOLOR="\033[0m"
+
+if [ $USER != root ]; then
+  echo -e $RED"Error: must be run as root"
+  echo -e $YELLOW"Exiting..."$ENDCOLOR
+  exit 0
+fi
 
 function get_json(){
 	ret=$(echo $1 | grep -Po '"'$2'":.*?[^\\]",?')
@@ -59,7 +60,7 @@ function request_ck(){
 	ck=$(get_json "$res" "consumerKey")
 	if [ -z $ck ]; then
 		err=$(get_json "$ret" "message")
-		log "Error: $err"
+		logger -t "Yadhu" -s "Error: $err"
 		exit 1
 	fi
 	url=$(get_json "$res" "validationUrl")
@@ -95,7 +96,7 @@ function get_ids(){
 
 		err=$(get_json "$ret" "message")
 		if [ -n "$err" ]; then
-			log "Error: $err"
+			logger -t "Yadhu" -s "Error: $err"
 			exit 1
 		fi
 		ids="$ids,$ret"
@@ -114,7 +115,7 @@ function get_ids(){
 
 			err=$(get_json "$ret" "message")
 			if [ -n "$err" ]; then
-				log "Error: $err"
+				logger -t "Yadhu" -s "Error: $err"
 				exit 1
 			fi
 			ids="$ids,$ret"
@@ -142,16 +143,24 @@ function set_dh(){
 
 		err=$(get_json "$ret" "message")
 		if [ -n "$err" ]; then
-			log "Error: $err"
+			logger -t "Yadhu" -s "Error: $err"
 			exit 1
 		fi
 	done
 }
 
+if [ "$1" == "-d" ]; then
+	trap "rm /var/run/yadhu.pid" EXIT	
+fi
+
 # Generate config template if needed
 if [ ! -e "${CONFIG}" ]; then
-	gen_conftemplate
-	log "Config template generated, please modify with propper values."
+	if [ "$1" != "-d" ]; then
+		gen_conftemplate
+		logger -t "Yadhu" -s "Config template generated, please modify with propper values."
+	else
+		logger -t "Yadhu" -s "Error: Config file not found."
+	fi
 	exit 1
 fi
 
@@ -159,22 +168,35 @@ fi
 source $CONFIG
 
 if [ -z "$AppKey" -o -z "$AppSecrect" ]; then
-	log "Please generate a pair of AppKey and AppSecrect at:"
-	log "\"https://eu.api.ovh.com/createApp/\" and setup the config file."
+	logger -t "Yadhu" -s "Please generate a pair of AppKey and AppSecrect at:"
+	logger -t "Yadhu" -s "\"https://eu.api.ovh.com/createApp/\" and setup the config file."
 	exit 1
 fi
 
 if [ -z "$__ck" ]; then
-	request_ck
+	if [ "$1" != "-d" ]; then
+		request_ck
+	else
+		logger -t "Yadhu" -s "Error: Consumer Key not set."
+		exit 1
+	fi
 fi
 
 if [ -z "$Domain" ]; then
-	log "Please set a domain name at the config file."
+	logger -t "Yadhu" -s "Error: Please set a domain name at the config file."
 	exit 1
 fi
 
-ids=$(get_ids)
-set_dh "$ids"
+while true; do
+	ids=$(get_ids)
+	set_dh "$ids"
+
+	[ "$1" == "-d" ] || break;
+	pid=
+	sleep "$Check"s & pid=$!
+	wait
+	pid=
+done
 
 exit 0
 
