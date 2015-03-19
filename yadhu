@@ -125,12 +125,37 @@ function get_ids(){
 	echo $(echo -n $ids |  tr -d '[]' | tr ',' ' ')
 }
 
+function get_dh_info(){
+	TS=$(date +%s)
+	Sig=$(get_sign $AppSecrect $__ck GET $1 $TS)
+	ret=$(curl -s -X GET -H "Content-Type:application/json" \
+		-H "X-Ovh-Application:$AppKey" \
+		-H "X-Ovh-Timestamp:$TS" \
+		-H "X-Ovh-Signature:$Sig" \
+		-H "X-Ovh-Consumer:$__ck" \
+		$1)
+
+	err=$(get_json "$ret" "message")
+	if [ -n "$err" ]; then
+		logger -t "Yadhu" -s "Error: $err"
+		exit 1
+	fi
+
+	echo "$ret"
+}
+
 function set_dh(){
 	zone="https://eu.api.ovh.com/1.0/domain/zone/$Domain/dynHost/record/"
 	IP=$(curl -s "$Web" | grep -E -o "$WebPatt")
-	logger -t "Yadhu" -s "Updating domains with IP: $IP"
 	for id in $1; do
 		Body=$zone$id
+		reg="$(get_dh_info $Body)"
+		domain_url=$(get_json "$reg" "subDomain")\.$(get_json "$reg" "zone")
+		domain_cip=$(get_json "$reg" "ip")
+		if [ "$IP" == "$domain_cip" ]; then
+			logger -t "Yadhu" -s "Skiping $domain_url due IP is Already setted. ($IP)"
+			continue
+		fi
 		Data='{"ip":"'$IP'"}'
 		TS=$(date +%s)
 		Sig=$(get_sign $AppSecrect $__ck PUT $Body $TS $Data)
@@ -147,6 +172,7 @@ function set_dh(){
 			logger -t "Yadhu" -s "Error: $err"
 			exit 1
 		fi
+		logger -t "Yadhu" -s "$domain_url updated with IP: $IP"
 	done
 }
 
